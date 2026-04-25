@@ -1,0 +1,26 @@
+# Trained model artifacts — push to Hugging Face Hub instead
+bert_model/
+models/
+bert_classification/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Logs / local secrets
+*.log
+.env
+.env.local

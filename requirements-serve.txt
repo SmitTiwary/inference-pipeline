@@ -1,0 +1,7 @@
+# Minimal serving runtime — used inside the Docker image.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+prometheus-client==0.21.0
+torch==2.4.1
+transformers==4.45.2
