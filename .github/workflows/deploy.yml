@@ -33,9 +33,43 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
-  # ── 2. Build & Push Docker Image ────────────────────────────────────────────
-  build:
+  # ── 2. Model Evaluation (on trained model artifact, if present) ─────────────
+  evaluate:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run model evaluation
+        env:
+          OUTPUT_DIR: ${{ vars.EVAL_MODEL_DIR || './models/bert_model_sen' }}
+          EVAL_SAMPLES: "500"
+        run: |
+          if [ -d "$OUTPUT_DIR" ]; then
+            python -m app.evaluate
+          else
+            echo "No trained model found at $OUTPUT_DIR — skipping offline eval."
+          fi
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: "**/eval_results.json"
+          if-no-files-found: ignore
+
+  # ── 3. Build & Push Docker Image ────────────────────────────────────────────
+  build:
+    needs: [test, evaluate]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
