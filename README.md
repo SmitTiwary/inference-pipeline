@@ -146,3 +146,4 @@ docker-compose.yml      # inference + prometheus + grafana
 - **Apple Silicon**: `torch` autodetects the MPS backend, so inference runs on the Mac GPU automatically — no config needed.
 - **`bert_model/` is gitignored.** Trained weights live on Hugging Face Hub, not in this repo. See [.gitignore](.gitignore).
 - **Stub fallback**: if `transformers` isn't installed or `MODEL_PATH` doesn't resolve, [model_loader.py](app/utils/model_loader.py) returns a keyword-based stub classifier so the API still responds. Useful for CI and frontend development.
+## CI/CD demo for class
