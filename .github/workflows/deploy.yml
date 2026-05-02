@@ -36,7 +36,12 @@ jobs:
           pip install ruff
           ruff check app/ tests/
 
-      - name: Run tests (incl. test_eval.py)
+      - name: Run tests (incl. test_eval.py — uses real BERT pulled from HF Hub)
+        env:
+          MODEL_PATH: ${{ vars.HF_MODEL_REPO || 'Glsmit/bert-imdb-sentiment' }}
+          MODEL_VERSION: ci
+          # First-run cost: ~30s to download the 426 MB model. Cached afterwards.
+          HF_HOME: ${{ runner.temp }}/hf-cache
         run: pytest tests/ -v --tb=short
 
   # ── 2. Offline Model Evaluation ─────────────────────────────────────────────
@@ -54,16 +59,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run model evaluation
+      - name: Run model evaluation against HF Hub model
         env:
-          OUTPUT_DIR: ${{ vars.EVAL_MODEL_DIR || './models/bert_model_sen' }}
-          EVAL_SAMPLES: "500"
-        run: |
-          if [ -d "$OUTPUT_DIR" ]; then
-            python -m app.evaluate
-          else
-            echo "No trained model found at $OUTPUT_DIR — skipping offline eval."
-          fi
+          # evaluate.py uses OUTPUT_DIR both as the model source and the
+          # results destination — passing the HF repo id makes it download
+          # the model and write eval_results.json under ./<org>/<repo>/.
+          OUTPUT_DIR: ${{ vars.HF_MODEL_REPO || 'Glsmit/bert-imdb-sentiment' }}
+          EVAL_SAMPLES: "200"
+          HF_HOME: ${{ runner.temp }}/hf-cache
+        run: python -m app.evaluate
 
       - name: Upload eval results
         if: always()
