@@ -1,10 +1,16 @@
 name: CI / CD
 
+# Promotion flow:
+#   feature/* --PR--> dev    : test + evaluate
+#   merge to dev             : test + evaluate + build :dev   --> auto-PR to stag
+#   merge to stag            : test + evaluate + build :stag  --> auto-PR to main
+#   merge to main (= prod)   : test + evaluate + build :prod  (gated by 'production' env)
+
 on:
   push:
-    branches: [main]
+    branches: [main, stag, dev]
   pull_request:
-    branches: [main]
+    branches: [main, stag, dev]
 
 env:
   REGISTRY: ghcr.io
@@ -30,10 +36,10 @@ jobs:
           pip install ruff
           ruff check app/ tests/
 
-      - name: Run tests
+      - name: Run tests (incl. test_eval.py)
         run: pytest tests/ -v --tb=short
 
-  # ── 2. Model Evaluation (on trained model artifact, if present) ─────────────
+  # ── 2. Offline Model Evaluation ─────────────────────────────────────────────
   evaluate:
     needs: test
     runs-on: ubuntu-latest
@@ -67,20 +73,31 @@ jobs:
           path: "**/eval_results.json"
           if-no-files-found: ignore
 
-  # ── 3. Build & Push Docker Image ────────────────────────────────────────────
+  # ── 3. Build & Push Docker Image to GHCR (only on push to env branches) ────
   build:
     needs: [test, evaluate]
+    if: github.event_name == 'push' && contains(fromJson('["main","stag","dev"]'), github.ref_name)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
-
+    # The 'production' environment can require a reviewer in the GitHub UI;
+    # 'dev' and 'stag' are unprotected and run automatically.
+    environment:
+      name: ${{ github.ref_name == 'main' && 'production' || github.ref_name }}
     outputs:
-      image: ${{ steps.meta.outputs.tags }}
-
+      image_tag: ${{ steps.envtag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve environment tag
+        id: envtag
+        run: |
+          case "${{ github.ref_name }}" in
+            main) echo "tag=prod" >> "$GITHUB_OUTPUT" ;;
+            stag) echo "tag=stag" >> "$GITHUB_OUTPUT" ;;
+            dev)  echo "tag=dev"  >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -89,40 +106,66 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,format=short
-            type=raw,value=latest
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.envtag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 3. Deploy (replace with your platform — shown here as SSH deploy) ───────
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: production
+      - name: Summary
+        run: |
+          {
+            echo "## Built image"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.envtag.outputs.tag }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
+  # ── 4. Auto-promote: open PR to next env ────────────────────────────────────
+  promote:
+    needs: build
+    if: github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'stag')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd /opt/inference-pipeline
-            docker compose pull inference
-            docker compose up -d --no-deps inference
-            docker system prune -f
+      - uses: actions/checkout@v4
+
+      - name: Resolve target branch
+        id: target
+        run: |
+          case "${{ github.ref_name }}" in
+            dev)  echo "branch=stag" >> "$GITHUB_OUTPUT" ;;
+            stag) echo "branch=main" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Open / update promotion PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC: ${{ github.ref_name }}
+          DST: ${{ steps.target.outputs.branch }}
+        run: |
+          existing=$(gh pr list --base "$DST" --head "$SRC" --json number --jq 'length')
+          if [ "$existing" = "0" ]; then
+            gh pr create \
+              --base "$DST" \
+              --head "$SRC" \
+              --title "Promote $SRC -> $DST (sha ${GITHUB_SHA::7})" \
+              --body "Automated promotion PR after green CI on \`$SRC\`.
+
+          Image built and pushed:
+          - \`ghcr.io/${{ github.repository }}/inference:${{ needs.build.outputs.image_tag }}\`
+          - \`ghcr.io/${{ github.repository }}/inference:sha-${GITHUB_SHA}\`
+
+          Merge this PR to advance to \`$DST\`."
+            echo "Created PR $SRC -> $DST"
+          else
+            echo "PR $SRC -> $DST already exists; nothing to do."
+          fi
