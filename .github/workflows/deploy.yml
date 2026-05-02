@@ -8,25 +8,26 @@ name: CI / CD
 
 on:
   push:
-    branches: [main, stag, dev]
+    branches: [main, stag, dev] # Runs pipeline when code is pushed to these branches
   pull_request:
-    branches: [main, stag, dev]
-
+    branches: [main, stag, dev] # Runs pipeline when PR is created targeting these branches
+#You push code to dev → pipeline runs
+#You open PR: dev → stag → pipeline runs
 env:
   REGISTRY: ghcr.io
   # GHCR requires the repository name to be all lowercase; ${{ github.repository }}
   # preserves case (e.g. SmitTiwary/inference-pipeline). The image name is
   # lowercased once per job below and surfaced via steps.imagename.outputs.value.
-  IMAGE_BASENAME: inference
+  IMAGE_BASENAME: inference # Base name of your Docker image
 
 jobs:
   # ── 1. Lint & Unit Tests ────────────────────────────────────────────────────
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # GitHub gives you a fresh Ubuntu VM
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # clones your repo code into the VM
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5 #Installs Python 3.11 + caches dependencies
         with:
           python-version: "3.11"
           cache: pip
@@ -34,9 +35,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Lint
+      - name: Lint #Checks code quality # Detects unused imports, undefined names, and other issues
         run: |
-          pip install ruff
+          pip install ruff   
           ruff check app/ tests/
 
       - name: Run tests (incl. test_eval.py — uses real BERT pulled from HF Hub)
