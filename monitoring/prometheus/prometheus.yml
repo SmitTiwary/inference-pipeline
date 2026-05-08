@@ -7,3 +7,4 @@ scrape_configs:
     static_configs:
       - targets: ["inference:8000"]
     metrics_path: /metrics
+#“Every 15 seconds, go to the inference service and collect metrics from /metrics.”
